@@ -538,14 +538,10 @@ modules:
       - install -Dm0644 -t ${FLATPAK_DEST}/share/metainfo/                   build_config/package/${FLATPAK_ID}.metainfo.xml
     sources:
       - type: archive
-        url: https://github.com/eclipse/sumo/archive/refs/tags/v1_25_0.tar.gz
-        sha256: 7944f574288db2ec46648fa4b49fbff2023263b4562f6068e38e9b25b2059f9e
+        url: https://github.com/eclipse/sumo/archive/refs/tags/v1_26_0.tar.gz
+        sha256: eeb93adb0745f64c0a7931cb577858f6c8bad56f41ac61dfb43d9fc1dc0d5ee3
         x-checker-data:
           type: anitya
           project-id: 241872
           stable-only: true
           url-template: https://github.com/eclipse/sumo/archive/refs/tags/v$version.tar.gz
-      - type: patch
-        path: captions.patch
-      - type: patch
-        path: cmake_setup_py.patch

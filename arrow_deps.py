@@ -90,43 +90,41 @@ def expand_template(template, variables):
     return re.sub(r"\$\{([^}]+)\}", replace, template)
 
 
-def render_dependency_env_lines(variables, dependencies):
-    lines = []
+def build_dependency_data(variables, dependencies):
+    data = []
     for url_var, tarball, url in dependencies:
         build_var = url_var.replace("_URL", "_BUILD_SHA256_CHECKSUM")
         if build_var not in variables:
             raise SystemExit(f"missing checksum for {url_var} in Arrow versions.txt")
-        lines.append(
-            f"        {url_var}: /run/build/arrow/cpp/thirdparty/{expand_template(tarball, variables)}\n"
+        data.append(
+            {
+                "url_var": url_var,
+                "url": expand_template(url, variables),
+                "sha256": variables[build_var],
+                "tarball": expand_template(tarball, variables),
+            }
         )
-    return lines
+    return data
 
 
-def render_dependency_sources(variables, dependencies):
-    blocks = []
-    for url_var, tarball, url in dependencies:
-        build_var = url_var.replace("_URL", "_BUILD_SHA256_CHECKSUM")
-        blocks.append(
-            "      - type: file\n"
-            f"        url: {expand_template(url, variables)}\n"
-            f"        sha256: {variables[build_var]}\n"
-            "        dest: cpp/thirdparty\n"
-            f"        dest-filename: {expand_template(tarball, variables)}\n"
-        )
-    return blocks
-
-
-def update_manifest(manifest_lines, dependency_env_lines, dependency_source_blocks):
+def update_manifest(manifest_lines, dependency_data):
     updated = []
     in_arrow_module = False
-    env_inserted = False
-    files_inserted = False
+    env_index = 0
+    file_index = 0
+    file_block_active = False
 
     for line in manifest_lines:
         if line.startswith("  - name: "):
-            in_arrow_module = line.strip() == f"- name: {ARROW_MODULE_NAME}"
-            env_inserted = False
-            files_inserted = False
+            next_is_arrow = line.strip() == f"- name: {ARROW_MODULE_NAME}"
+            if in_arrow_module and not next_is_arrow:
+                if env_index != len(dependency_data) or file_index != len(dependency_data):
+                    raise SystemExit("not all Arrow dependencies were updated from versions.txt")
+            in_arrow_module = next_is_arrow
+            if in_arrow_module:
+                env_index = 0
+                file_index = 0
+                file_block_active = False
             updated.append(line)
             continue
 
@@ -134,28 +132,52 @@ def update_manifest(manifest_lines, dependency_env_lines, dependency_source_bloc
             updated.append(line)
             continue
 
-        if re.match(r"^\s{8}ARROW_[A-Z0-9_]+_URL:\s+", line):
-            if not env_inserted:
-                updated.extend(dependency_env_lines)
-                env_inserted = True
+        if env_index == len(dependency_data) and file_index == len(dependency_data):
             continue
 
         if line == "      - type: file\n":
-            if not files_inserted:
-                updated.extend(dependency_source_blocks)
-                files_inserted = True
-            continue
-
-        if files_inserted and line.startswith("  - name: "):
-            # Handled at the top of the loop on the next iteration.
+            if file_index >= len(dependency_data):
+                raise SystemExit("found more Arrow file sources in the manifest than in versions.txt")
             updated.append(line)
+            file_block_active = True
             continue
 
-        if files_inserted and line.strip() == "":
-            # Skip old file-source blank padding.
+        if file_block_active:
+            current = dependency_data[file_index]
+            if re.match(r"^\s{8}url:\s+", line):
+                updated.append(f"        url: {current['url']}\n")
+                continue
+            if re.match(r"^\s{8}sha256:\s+", line):
+                updated.append(f"        sha256: {current['sha256']}\n")
+                continue
+            if re.match(r"^\s{8}dest-filename:\s+", line):
+                updated.append(f"        dest-filename: {current['tarball']}\n")
+                file_index += 1
+                file_block_active = False
+                continue
+
+        match = re.match(r"^\s{8}(ARROW_[A-Z0-9_]+_URL):\s+", line)
+        if match:
+            if env_index >= len(dependency_data):
+                raise SystemExit("found more Arrow env vars in the manifest than in versions.txt")
+            current = dependency_data[env_index]
+            if current["url_var"] != match.group(1):
+                raise SystemExit(
+                    f"Arrow dependency order mismatch: manifest has {match.group(1)} "
+                    f"but versions.txt has {current['url_var']}"
+                )
+            updated.append(
+                f"        {current['url_var']}: /run/build/arrow/cpp/thirdparty/{current['tarball']}\n"
+            )
+            env_index += 1
             continue
 
         updated.append(line)
+
+    if in_arrow_module and (
+        env_index != len(dependency_data) or file_index != len(dependency_data)
+    ):
+        raise SystemExit("not all Arrow dependencies were updated from versions.txt")
 
     return updated
 
@@ -165,7 +187,7 @@ def main():
     parser.add_argument(
         "versions_file",
         nargs="?",
-        help="kept for compatibility; the manifest now drives the Arrow version",
+        help="kept for compatibility; the manifest provides the Arrow version",
     )
     parser.add_argument(
         "manifest",
@@ -180,12 +202,9 @@ def main():
     archive_url = get_arrow_archive_url(manifest_path)
     versions_txt = extract_versions_txt(archive_url)
     variables, dependencies = parse_versions_txt(versions_txt)
-    dependency_env_lines = render_dependency_env_lines(variables, dependencies)
-    dependency_source_blocks = render_dependency_sources(variables, dependencies)
+    dependency_data = build_dependency_data(variables, dependencies)
 
-    updated_lines = update_manifest(
-        manifest_lines, dependency_env_lines, dependency_source_blocks
-    )
+    updated_lines = update_manifest(manifest_lines, dependency_data)
 
     with open(manifest_path, "w", encoding="utf-8") as handle:
         handle.writelines(updated_lines)

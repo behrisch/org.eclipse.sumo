@@ -555,10 +555,12 @@ modules:
       - install -Dm0644 -t ${FLATPAK_DEST}/share/metainfo/                   build_config/package/${FLATPAK_ID}.metainfo.xml
     sources:
       - type: archive
-        url: https://github.com/eclipse/sumo/archive/refs/tags/v1_27_0.tar.gz
-        sha256: 804cf70e95fc11ecf2465fc0c77f3fa03f854f84f95533465d2db5ba12959c17
+        url: https://github.com/eclipse/sumo/archive/refs/tags/v1_27_1.tar.gz
+        sha256: a48f3f7d46886d4c8fd1b5f751ab892bdbdfb35d05420eababefdf6e8875cd8b
         x-checker-data:
           type: anitya
           project-id: 241872
           stable-only: true
           url-template: https://github.com/eclipse/sumo/archive/refs/tags/v$version.tar.gz
+      - type: patch
+        path: sumo_relwithdebinfo.patch
